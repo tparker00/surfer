@@ -34,17 +34,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/wathiede/surfer/modem"
+	_ "github.com/wathiede/surfer/modem/s33"
 	_ "github.com/wathiede/surfer/modem/sb6121"
 	_ "github.com/wathiede/surfer/modem/sb6183"
 	_ "github.com/wathiede/surfer/modem/sb8200"
-	_ "github.com/wathiede/surfer/modem/s33"
 )
 
 var (
 	port         = flag.Int("port", 6666, "port to listen on when serving prometheus metrics")
 	timeout      = flag.Duration("timeout", 1*time.Second, "timeout for the HTTP GET to cable modem")
 	fakeDataPath = flag.String("fake", "", "path to fake HTML data.  (default) fetch over HTTP")
-	password     = flag.String("password", "", "Admin password if needed")
 
 	downstreamSNRMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "downstream_snr",
