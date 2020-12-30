@@ -29,7 +29,7 @@ func TestParseStatus(t *testing.T) {
 	flag.Set("v", "true")
 	flag.Set("logtostderr", "true")
 
-	p := "testdata/S33.json"
+	p := "testdata/S33-signal.json"
 	r, err := os.Open(p)
 	if err != nil {
 		t.Fatalf("Failed to open %q: %v", p, err)
