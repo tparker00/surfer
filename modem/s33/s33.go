@@ -41,8 +41,8 @@ import (
 
 const idURL = "https://192.168.100.1"
 const signalURL = "https://192.168.100.1/Cmconnectionstatus.html"
-const hnapURL = "https://192.168.100.1/HNAP1/"
-const hnapBase = "http://purenetworks.com/HNAP1/"
+const hnapURL = "https://192.168.100.1/HNAP1/" // This is a bit silly but the trailing slash needs to be there or auth fails
+const hnapBase = "http://purenetworks.com/HNAP1"
 
 var (
 	password = flag.String("password", "password", "Admin password if needed")
@@ -98,6 +98,43 @@ type s33 struct {
 
 func (s33) Name() string { return "S33" }
 
+// New returns a modem.Modem that scrapes S33 formatted data at the default
+// URL.
+func New() modem.Modem {
+	return &s33{}
+}
+
+// NewFakeData returns a modem.Modem that will parse S33 formatted data
+// from the file given in path.
+func NewFakeData(path string) (modem.Modem, error) {
+	b, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return &s33{fakeData: b}, nil
+}
+
+// Status will return signal data parsed from an HTML status page.  If
+// sb.fakeData is not nil, the fake data is parsed.  If it is nil, then an
+// HTTP request is made to the default signal URL of a S33.
+func (sb *s33) Status(ctx context.Context) (*modem.Signal, error) {
+	if sb.fakeData != nil {
+		status := statusResponse{}
+		json.Unmarshal(sb.fakeData, &status)
+		return parseStatus(&status)
+	}
+
+	rc, err := getStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return parseStatus(rc)
+}
+
+func init() {
+	modem.Register(probe)
+}
+
 func isS33(b []byte) bool {
 	return bytes.Contains(b, []byte(`<span id="thisModelNumberIs"> S33 </span>`))
 }
@@ -120,7 +157,7 @@ func probe(ctx context.Context, path string) modem.Modem {
 		return nil
 	}
 	glog.Infof("Probing %q", signalURL)
-	rc, err := get(ctx)
+	rc, err := getID(ctx)
 	if err != nil {
 		glog.Errorf("Failed to get status page: %v", err)
 		return nil
@@ -137,27 +174,7 @@ func probe(ctx context.Context, path string) modem.Modem {
 	return nil
 }
 
-func init() {
-	modem.Register(probe)
-}
-
-// New returns a modem.Modem that scrapes S33 formatted data at the default
-// URL.
-func New() modem.Modem {
-	return &s33{}
-}
-
-// NewFakeData returns a modem.Modem that will parse S33 formatted data
-// from the file given in path.
-func NewFakeData(path string) (modem.Modem, error) {
-	b, err := ioutil.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return &s33{fakeData: b}, nil
-}
-
-func get(ctx context.Context) (io.ReadCloser, error) {
+func getID(ctx context.Context) (io.ReadCloser, error) {
 	client := httpClient()
 
 	req, err := http.NewRequest("GET", idURL, nil)
@@ -206,7 +223,7 @@ func getStatus(ctx context.Context) (*statusResponse, error) {
 	hnap := hnapAuth(pKey, "GetMultipleHNAPs")
 
 	req = req.WithContext(ctx)
-	req.Header.Add("SOAPAction", fmt.Sprintf("%sGetMultipleHNAPs", hnapBase))
+	req.Header.Add("SOAPAction", fmt.Sprintf("%s/GetMultipleHNAPs", hnapBase))
 	req.Header.Add("HNAP_AUTH", hnap)
 	req.Header.Add("Content-Type", "application/json")
 
@@ -216,10 +233,10 @@ func getStatus(ctx context.Context) (*statusResponse, error) {
 		return nil, err
 	}
 
-	response := statusResponse{}
+	response := &statusResponse{}
 	b, err := ioutil.ReadAll(resp.Body)
-	err = json.Unmarshal(b, &response)
-	return &response, err
+	err = json.Unmarshal(b, response)
+	return response, err
 }
 
 func privateKey(l loginResponse) string {
@@ -232,7 +249,7 @@ func encryptedPass(l loginResponse, privateKey string) string {
 
 func hnapAuth(privateKey string, action string) string {
 	t := (time.Now().UnixNano() / 1000000) % 2000000000000
-	return fmt.Sprintf("%s %d", encrypt(privateKey, fmt.Sprintf("%d%s", t, fmt.Sprintf("%s%s", hnapBase, action))), t)
+	return fmt.Sprintf("%s %d", encrypt(privateKey, fmt.Sprintf("%d%s", t, fmt.Sprintf("%s/%s", hnapBase, action))), t)
 }
 
 func auth(ctx context.Context) ([]*http.Cookie, error) {
@@ -255,13 +272,13 @@ func auth(ctx context.Context) ([]*http.Cookie, error) {
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", hnapURL, strings.NewReader(string(authJSON)))
+	req, err := http.NewRequest("POST", hnapURL, bytes.NewBuffer(authJSON))
 	if err != nil {
 		return nil, err
 	}
 
 	req = req.WithContext(ctx)
-	req.Header.Add("SOAPAction", fmt.Sprintf("%sLogin", hnapBase))
+	req.Header.Add("SOAPAction", fmt.Sprintf("%s/Login", hnapBase))
 	req.Header.Add("Content-Type", "application/json")
 
 	body, err := httpCall(client, req)
@@ -318,8 +335,7 @@ func auth(ctx context.Context) ([]*http.Cookie, error) {
 	}
 
 	req = req.WithContext(ctx)
-	// Setup auth headers
-	req.Header.Add("SOAPAction", fmt.Sprintf("%sLogin", hnapBase))
+	req.Header.Add("SOAPAction", fmt.Sprintf("%s/Login", hnapBase))
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("HNAP_AUTH", hnap)
 
@@ -333,7 +349,6 @@ func auth(ctx context.Context) ([]*http.Cookie, error) {
 		return cookies, nil
 	}
 
-	fmt.Println("Something done goofed")
 	return nil, errors.New("Login Failed")
 }
 
@@ -358,23 +373,6 @@ func httpCall(client *http.Client, req *http.Request) ([]byte, error) {
 		return nil, err
 	}
 	return ioutil.ReadAll(resp.Body)
-}
-
-// Status will return signal data parsed from an HTML status page.  If
-// sb.fakeData is not nil, the fake data is parsed.  If it is nil, then an
-// HTTP request is made to the default signal URL of a S33.
-func (sb *s33) Status(ctx context.Context) (*modem.Signal, error) {
-	if sb.fakeData != nil {
-		status := statusResponse{}
-		json.Unmarshal(sb.fakeData, &status)
-		return parseStatus(&status)
-	}
-
-	rc, err := getStatus(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return parseStatus(rc)
 }
 
 func parseStatus(s *statusResponse) (*modem.Signal, error) {
