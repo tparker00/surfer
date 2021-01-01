@@ -48,7 +48,7 @@ var (
 	password = flag.String("password", "password", "Admin password if needed")
 )
 
-// JSON payload for login information
+// JSON payload needed to send to the HNAP endpoint to for a login request
 type login struct {
 	Login struct {
 		Action        string `json:"Action"`
@@ -59,7 +59,7 @@ type login struct {
 	} `json:"Login"`
 }
 
-// JSON response from login
+// Response from HNAP with challenge, publicKey, etc needed to create session
 type loginResponse struct {
 	LoginResponse struct {
 		Challenge   string `json:"Challenge"`
@@ -69,7 +69,9 @@ type loginResponse struct {
 	} `json:"LoginResponse"`
 }
 
-// JSON payload for getting downstream/upstream info
+// JSON payload for getting downstream/upstream info.
+// From poking around there are other HNAP endpoints that
+// can be queried but not sure if they are all too useful.
 type status struct {
 	HNAPs struct {
 		DownstreamChannelInfo string `json:"GetCustomerStatusDownstreamChannelInfo"`
@@ -253,8 +255,8 @@ func hnapAuth(privateKey string, action string) string {
 }
 
 func auth(ctx context.Context) ([]*http.Cookie, error) {
-	// The S33 forces https but also uses a self-signed certificates from Arris.
-	// So we need to disable cert checking
+	// The S33 forces https via a redirect but also uses a self-signed
+	// certificates from Arris.
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
